@@ -13,7 +13,7 @@ ENV/
 
 # Credentials
 credentials/
-*.json
+google_credentials.json
 
 # Cache
 cache/
@@ -29,4 +29,5 @@ cache/
 
 # OS
 .DS_Store
-Thumbs.db
+Thumbs.dbgoogle_credentials.json
+.streamlit/secrets.toml

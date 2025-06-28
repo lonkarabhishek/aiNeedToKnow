@@ -603,7 +603,7 @@ def render_footer():
     st.markdown("---")
     st.markdown("""
     <div style="text-align: center; color: #6B7280; padding: 2rem 0;">
-       Built with ❤️ for Working Professionals by <a href="https://www.linkedin.com/in/lonkarabhishek/" target="_blank" style="text-decoration: none; color: #667eea; font-weight: 600;">
+       Built with ❤️ for Work Professionals by <a href="https://www.linkedin.com/in/lonkarabhishek/" target="_blank" style="text-decoration: none; color: #667eea; font-weight: 600;">
             Abhishek Lonkar </a>
         <br><br>
         <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 

@@ -7,6 +7,7 @@ from google.oauth2.service_account import Credentials
 import streamlit as st
 from datetime import datetime, timedelta
 import os
+import json
 from config import *
 
 class DataManager:
@@ -16,7 +17,7 @@ class DataManager:
         self.setup_google_sheets()
         
     def setup_google_sheets(self):
-        """Initialize Google Sheets connection"""
+        """Initialize Google Sheets connection with better error handling"""
         try:
             # Define required scopes
             SCOPES = [
@@ -24,52 +25,126 @@ class DataManager:
                 'https://www.googleapis.com/auth/drive'
             ]
             
-            # Check if running on Streamlit Cloud (using secrets)
+            credentials = None
+            sheet_url = None
+            
+            # Method 1: Try Streamlit secrets (for deployment)
             if hasattr(st, 'secrets') and 'google_credentials' in st.secrets:
-                # Use Streamlit secrets for deployment
-                credentials_dict = dict(st.secrets['google_credentials'])
-                credentials = Credentials.from_service_account_info(
-                    credentials_dict, 
-                    scopes=SCOPES
-                )
-                self.gc = gspread.authorize(credentials)
-                sheet_url = st.secrets.get('GOOGLE_SHEET_URL', GOOGLE_SHEET_URL)
-            else:
-                # Try local credentials file first
-                if os.path.exists(GOOGLE_CREDENTIALS_PATH):
+                print("🔑 Using Streamlit secrets for credentials")
+                try:
+                    # Convert secrets to dict and handle private key formatting
+                    credentials_dict = dict(st.secrets['google_credentials'])
+                    
+                    # Ensure private key has proper formatting
+                    if 'private_key' in credentials_dict:
+                        private_key = credentials_dict['private_key']
+                        # Replace literal \n with actual newlines
+                        private_key = private_key.replace('\\n', '\n')
+                        credentials_dict['private_key'] = private_key
+                    
+                    credentials = Credentials.from_service_account_info(
+                        credentials_dict, 
+                        scopes=SCOPES
+                    )
+                    sheet_url = st.secrets.get('GOOGLE_SHEET_URL', GOOGLE_SHEET_URL)
+                    print("✅ Successfully loaded Streamlit secrets")
+                    
+                except Exception as e:
+                    print(f"❌ Error with Streamlit secrets: {e}")
+                    credentials = None
+            
+            # Method 2: Try local credentials file (for development)
+            if not credentials and os.path.exists(GOOGLE_CREDENTIALS_PATH):
+                print("🔑 Using local credentials file")
+                try:
                     credentials = Credentials.from_service_account_file(
                         GOOGLE_CREDENTIALS_PATH,
                         scopes=SCOPES
                     )
-                    self.gc = gspread.authorize(credentials)
                     sheet_url = GOOGLE_SHEET_URL
-                else:
-                    # Fallback: show helpful error message
-                    st.error("""
-                    🔧 **Google Sheets Setup Required**
+                    print("✅ Successfully loaded local credentials")
                     
-                    Choose one option:
-                    
-                    **Option 1: Streamlit Secrets (Recommended)**
-                    1. Create `.streamlit/secrets.toml` file
-                    2. Add your Google credentials to it
-                    
-                    **Option 2: Local Credentials File**
-                    1. Put your `google_credentials.json` in the `credentials/` folder
-                    2. Set GOOGLE_SHEET_URL in config.py
-                    
-                    📚 [See setup guide for details](https://docs.streamlit.io/streamlit-community-cloud/get-started/deploy-an-app/connect-to-data-sources/secrets-management)
-                    """)
-                    return
+                except Exception as e:
+                    print(f"❌ Error with local credentials: {e}")
+                    credentials = None
             
-            # Open the Google Sheet
+            # Method 3: Try environment variables
+            if not credentials:
+                try:
+                    creds_json = os.getenv('GOOGLE_CREDENTIALS_JSON')
+                    if creds_json:
+                        print("🔑 Using environment variable credentials")
+                        credentials_dict = json.loads(creds_json)
+                        credentials = Credentials.from_service_account_info(
+                            credentials_dict,
+                            scopes=SCOPES
+                        )
+                        sheet_url = os.getenv('GOOGLE_SHEET_URL', GOOGLE_SHEET_URL)
+                        print("✅ Successfully loaded environment credentials")
+                except Exception as e:
+                    print(f"❌ Error with environment credentials: {e}")
+            
+            if not credentials:
+                st.error("""
+                🔧 **Google Sheets Setup Required**
+                
+                No valid credentials found. Please set up one of the following:
+                
+                **For Streamlit Cloud:**
+                - Add credentials to your app's secrets in the Streamlit dashboard
+                
+                **For Local Development:**
+                - Put `google_credentials.json` in the `credentials/` folder
+                - Or set `GOOGLE_CREDENTIALS_JSON` environment variable
+                
+                📚 [Setup Guide](https://docs.streamlit.io/streamlit-community-cloud/deploy-an-app/connect-to-data-sources/secrets-management)
+                """)
+                return
+            
+            # Authorize and connect to Google Sheets
+            print("🔐 Authorizing Google Sheets client...")
+            self.gc = gspread.authorize(credentials)
+            
             if sheet_url:
+                print(f"📊 Connecting to sheet: {sheet_url}")
                 self.sheet = self.gc.open_by_url(sheet_url).sheet1
+                print("✅ Successfully connected to Google Sheets!")
             else:
-                st.error("Google Sheet URL not configured.")
+                st.error("❌ Google Sheet URL not configured.")
                 
         except Exception as e:
-            st.error(f"Failed to connect to Google Sheets: {str(e)}")
+            error_msg = str(e)
+            print(f"❌ Google Sheets connection failed: {error_msg}")
+            
+            # Provide specific error messages
+            if "invalid_grant" in error_msg.lower():
+                st.error("""
+                🔧 **Authentication Error: Invalid JWT Signature**
+                
+                This usually means there's an issue with your credentials:
+                
+                **Common fixes:**
+                1. **Check private key formatting** - Make sure newlines are properly formatted
+                2. **Verify service account email** - Ensure your Google Sheet is shared with: 
+                   `aineedtoknow-reader@aineedtoknow-app.iam.gserviceaccount.com`
+                3. **Check system time** - Ensure your system clock is synchronized
+                4. **Regenerate credentials** - Create new service account key if needed
+                
+                **Current error:** `{}`
+                """.format(error_msg))
+            elif "permission" in error_msg.lower():
+                st.error(f"""
+                🔧 **Permission Error**
+                
+                Please share your Google Sheet with this service account email:
+                `aineedtoknow-reader@aineedtoknow-app.iam.gserviceaccount.com`
+                
+                Give it **Editor** permissions.
+                
+                **Error:** {error_msg}
+                """)
+            else:
+                st.error(f"❌ Failed to connect to Google Sheets: {error_msg}")
             
     def fetch_news_data(self, force_refresh=False):
         """Fetch news data from Google Sheets with caching"""
@@ -247,6 +322,8 @@ class DataManager:
         except Exception as e:
             print(f"Error getting unique domains: {e}")
             return ["All", "Analytics"]
+    
+    def save_user_email(self, name, email, linkedin=""):
         """Save user email to CSV file"""
         try:
             os.makedirs('cache', exist_ok=True)
@@ -273,38 +350,7 @@ class DataManager:
             
             # Save to CSV
             users_df.to_csv(USERS_CSV_PATH, index=False)
-            return True, "Successfully registered for daily updates!"
+            return True, "Successfully registered for updates!"
             
         except Exception as e:
             return False, f"Error saving user data: {str(e)}"
-    def save_user_email(self, name, email, linkedin=""):
-            """Save user email to CSV file"""
-            try:
-                os.makedirs('cache', exist_ok=True)
-                
-                # Create user data
-                user_data = {
-                    'Name': name,
-                    'Email': email,
-                    'LinkedIn': linkedin,
-                    'Signup_Date': datetime.now().strftime('%m/%d/%Y %H:%M:%S')
-                }
-                
-                # Check if file exists
-                if os.path.exists(USERS_CSV_PATH):
-                    users_df = pd.read_csv(USERS_CSV_PATH)
-                    # Check if email already exists
-                    if email in users_df['Email'].values:
-                        return False, "Email already registered!"
-                    
-                    # Append new user
-                    users_df = pd.concat([users_df, pd.DataFrame([user_data])], ignore_index=True)
-                else:
-                    users_df = pd.DataFrame([user_data])
-                
-                # Save to CSV
-                users_df.to_csv(USERS_CSV_PATH, index=False)
-                return True, "Successfully registered for updates!"
-                
-            except Exception as e:
-                return False, f"Error saving user data: {str(e)}"
