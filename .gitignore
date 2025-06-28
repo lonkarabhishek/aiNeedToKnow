@@ -31,3 +31,5 @@ cache/
 .DS_Store
 Thumbs.dbgoogle_credentials.json
 .streamlit/secrets.toml
+google_credentials.json
+.streamlit/secrets.toml
