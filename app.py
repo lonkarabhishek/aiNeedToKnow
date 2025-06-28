@@ -587,7 +587,7 @@ def render_email_signup(dm):
         if submitted:
             if email and "@" in email and "." in email:
                 try:
-                    success, message = dm.save_user_email(name, email, linkedin)
+                    success, message = dm.save_user_email_to_gsheet(name, email, linkedin)
                     if success:
                         st.success(message)
                         st.balloons()

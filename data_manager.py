@@ -354,3 +354,30 @@ class DataManager:
             
         except Exception as e:
             return False, f"Error saving user data: {str(e)}"
+    
+    def save_user_email_to_gsheet(self,name, email, linkedin=""):
+        try:
+            # Setup credentials from Streamlit secrets
+            scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+            creds = Credentials.from_service_account_info(st.secrets["google_credentials"], scopes=scope)
+            client = gspread.authorize(creds)
+
+            # Open the sheet by URL or name
+            sheet = client.open_by_url(st.secrets["GOOGLE_SHEET_URL"])
+            worksheet = sheet.worksheet("Signups")  # Make sure this tab exists
+
+            # Get all existing emails to prevent duplicate signup
+            emails = worksheet.col_values(2)  # Assuming Email is column B
+            if email in emails:
+                return False, "Email already registered!"
+
+            # Prepare row
+            signup_time = datetime.now().strftime('%m/%d/%Y %H:%M:%S')
+            row = [name, email, linkedin, signup_time]
+
+            # Append to the bottom of the sheet
+            worksheet.append_row(row)
+            return True, "Successfully registered for updates!"
+
+        except Exception as e:
+            return False, f"Error saving to Google Sheet: {str(e)}"
