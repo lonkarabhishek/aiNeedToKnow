@@ -1,5 +1,5 @@
 """
-Data management for aINeedToKnow - handles Google Sheets integration and caching
+Data management for aINeedToKnow - handles Google Sheets integration, caching, and hotness tracking
 """
 import pandas as pd
 import gspread
@@ -14,6 +14,7 @@ class DataManager:
     def __init__(self):
         self.gc = None
         self.sheet = None
+        self.hotness_sheet = None
         self.setup_google_sheets()
         
     def setup_google_sheets(self):
@@ -107,7 +108,12 @@ class DataManager:
             
             if sheet_url:
                 print(f"📊 Connecting to sheet: {sheet_url}")
-                self.sheet = self.gc.open_by_url(sheet_url).sheet1
+                spreadsheet = self.gc.open_by_url(sheet_url)
+                self.sheet = spreadsheet.sheet1  # Main tools sheet
+                
+                # Setup hotness tracking sheet
+                self.setup_hotness_sheet(spreadsheet)
+                
                 print("✅ Successfully connected to Google Sheets!")
             else:
                 st.error("❌ Google Sheet URL not configured.")
@@ -145,7 +151,159 @@ class DataManager:
                 """)
             else:
                 st.error(f"❌ Failed to connect to Google Sheets: {error_msg}")
+    
+    def setup_hotness_sheet(self, spreadsheet):
+        """Setup or access the hotness tracking sheet"""
+        try:
+            # Try to access existing Hotness sheet
+            try:
+                self.hotness_sheet = spreadsheet.worksheet("Hotness")
+                print("✅ Found existing Hotness sheet")
+            except gspread.WorksheetNotFound:
+                print("📝 Creating new Hotness sheet...")
+                # Create new sheet with headers
+                self.hotness_sheet = spreadsheet.add_worksheet(title="Hotness", rows="1000", cols="5")
+                
+                # Add headers
+                headers = ["Tool_Title", "IP_Address", "Timestamp", "User_Agent", "Session_ID"]
+                self.hotness_sheet.append_row(headers)
+                print("✅ Created Hotness sheet with headers")
+                
+        except Exception as e:
+            print(f"⚠️ Could not setup hotness sheet: {e}")
+            self.hotness_sheet = None
+    
+    def record_hotness_vote(self, tool_title, ip_address):
+        """Record a hotness vote for a tool"""
+        try:
+            if not self.hotness_sheet:
+                print("❌ No hotness sheet available")
+                return False
             
+            # Check if this IP already voted for this tool (use cache to reduce API calls)
+            if self.check_if_ip_voted_cached(tool_title, ip_address):
+                print(f"⚠️ IP {ip_address} already voted for {tool_title}")
+                return False
+            
+            # Record the vote
+            timestamp = datetime.now().strftime('%m/%d/%Y %H:%M:%S')
+            user_agent = "Streamlit_App"
+            session_id = st.session_state.get('session_id', 'unknown')
+            
+            row = [tool_title, ip_address, timestamp, user_agent, session_id]
+            self.hotness_sheet.append_row(row)
+            
+            print(f"✅ Recorded hotness vote: {tool_title} from {ip_address}")
+            
+            # Clear specific caches to force refresh
+            self._get_cached_hotness_counts.clear()
+            self._fetch_cached_data_with_hotness.clear()
+            
+            return True
+            
+        except Exception as e:
+            print(f"❌ Error recording hotness vote: {e}")
+            return False
+    
+    @st.cache_data(ttl=60, show_spinner=False)  # Cache vote status for 1 minute
+    def check_if_ip_voted_cached(_self, tool_title, ip_address):
+        """Cached version of IP vote check"""
+        return _self.check_if_ip_voted(tool_title, ip_address)
+    
+    def check_if_ip_voted(self, tool_title, ip_address):
+        """Check if an IP address has already voted for a specific tool"""
+        try:
+            if not self.hotness_sheet:
+                return False
+            
+            # Get all hotness records
+            records = self.hotness_sheet.get_all_records()
+            
+            # Check if this IP already voted for this tool
+            for record in records:
+                if (record.get('Tool_Title', '') == tool_title and 
+                    record.get('IP_Address', '') == ip_address):
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            print(f"❌ Error checking IP vote status: {e}")
+            return False
+    
+    def get_hotness_counts(self):
+        """Get hotness counts for all tools"""
+        try:
+            if not self.hotness_sheet:
+                return {}
+            
+            # Get all hotness records
+            records = self.hotness_sheet.get_all_records()
+            
+            # Count votes per tool
+            hotness_counts = {}
+            for record in records:
+                tool_title = record.get('Tool_Title', '')
+                if tool_title:
+                    hotness_counts[tool_title] = hotness_counts.get(tool_title, 0) + 1
+            
+            print(f"📊 Hotness counts: {hotness_counts}")
+            return hotness_counts
+            
+        except Exception as e:
+            print(f"❌ Error getting hotness counts: {e}")
+            return {}
+    
+    def fetch_news_data_with_hotness(self, force_refresh=False):
+        """Fetch news data from Google Sheets with hotness counts"""
+        # Use session state to track force refresh
+        if hasattr(st.session_state, 'force_refresh') and st.session_state.force_refresh:
+            force_refresh = True
+            st.session_state.force_refresh = False  # Reset the flag
+        
+        if force_refresh:
+            # Skip cache and fetch fresh data
+            return self._fetch_fresh_data_with_hotness()
+        else:
+            # Use cached version
+            return self._fetch_cached_data_with_hotness()
+    
+    @st.cache_data(ttl=CACHE_DURATION*3600, show_spinner=False)  # Cache for specified hours
+    def _fetch_cached_data_with_hotness(_self):
+        """Cached version of data fetching with hotness"""
+        return _self._fetch_fresh_data_with_hotness()
+    
+    @st.cache_data(ttl=300, show_spinner=False)  # Cache hotness for 5 minutes
+    def _get_cached_hotness_counts(_self):
+        """Cached version of hotness counts to reduce API calls"""
+        return _self.get_hotness_counts()
+    
+    def _fetch_fresh_data_with_hotness(self):
+        """Fetch fresh data from Google Sheets with hotness counts"""
+        try:
+            # Get base news data
+            df = self._fetch_fresh_data()
+            
+            if df.empty:
+                return df
+            
+            # Get cached hotness counts to reduce API calls
+            hotness_counts = self._get_cached_hotness_counts()
+            
+            # Add hotness counts to dataframe
+            df['hotness_count'] = df['Title'].map(lambda title: hotness_counts.get(title, 0))
+            
+            print(f"✅ Added hotness data to {len(df)} tools")
+            return df
+            
+        except Exception as e:
+            print(f"❌ Error fetching data with hotness: {e}")
+            # Fallback to data without hotness
+            base_df = self._fetch_fresh_data()
+            if not base_df.empty:
+                base_df['hotness_count'] = 0
+            return base_df
+    
     def fetch_news_data(self, force_refresh=False):
         """Fetch news data from Google Sheets with caching"""
         # Use session state to track force refresh

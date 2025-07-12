@@ -1,6 +1,6 @@
 """
 aINeedToKnow - AI News Webapp for Analytics Professionals
-Main Streamlit Application
+Main Streamlit Application with Hotness Feature
 """
 
 import streamlit as st
@@ -8,6 +8,7 @@ import pandas as pd
 from datetime import datetime
 import time
 import os
+import hashlib
 from data_manager import DataManager
 from config import *
 
@@ -19,7 +20,47 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Custom CSS for mobile-friendly design and reduced spacing
+def get_client_ip():
+    """Get client IP address for hotness tracking with browser fingerprinting"""
+    try:
+        # Try to get real IP from headers (for deployed apps)
+        if hasattr(st, 'session_state') and hasattr(st.session_state, '_get_widget_value'):
+            # In Streamlit Cloud, try to get real IP
+            import streamlit.web.server.websocket_headers as wsh
+            headers = wsh.get_websocket_headers()
+            if headers and 'x-forwarded-for' in headers:
+                real_ip = headers['x-forwarded-for'].split(',')[0].strip()
+                # Store real IP in session state for consistency
+                st.session_state.client_ip = real_ip
+                return real_ip
+            elif headers and 'x-real-ip' in headers:
+                real_ip = headers['x-real-ip']
+                st.session_state.client_ip = real_ip
+                return real_ip
+        
+        # Enhanced fingerprinting for local/dev environments
+        if 'client_ip' not in st.session_state:
+            # Create a more stable fingerprint using browser characteristics
+            import time
+            import hashlib
+            
+            # Use browser session + timestamp to create unique but persistent ID
+            browser_data = f"{st.session_state.get('session_id', 'unknown')}_{int(time.time() / 3600)}"  # Changes every hour
+            fingerprint = hashlib.md5(browser_data.encode()).hexdigest()[:16]
+            st.session_state.client_ip = f"dev_{fingerprint}"
+        
+        return st.session_state.client_ip
+    except Exception as e:
+        print(f"Error getting client IP: {e}")
+        # Final fallback - create persistent session ID
+        if 'client_ip' not in st.session_state:
+            import hashlib
+            import time
+            fallback_id = hashlib.md5(f"fallback_{time.time()}".encode()).hexdigest()[:16]
+            st.session_state.client_ip = f"session_{fallback_id}"
+        return st.session_state.client_ip
+
+# Custom CSS for mobile-friendly design and hotness feature
 st.markdown("""
 <style>
     /* Remove top padding and margins */
@@ -60,6 +101,158 @@ st.markdown("""
     .stSelectbox > div > div > div {
         color: #1a202c;
         font-weight: 600;
+    }
+    
+    /* Hotness button styling - ONLY for fire buttons */
+    .hotness-container {
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        padding-right: 0px;
+        margin-right: -10px;
+    }
+    
+    .hotness-container .stButton > button {
+        background: none !important;
+        border: none !important;
+        cursor: pointer !important;
+        font-size: 2rem !important;
+        transition: all 0.4s ease !important;
+        padding: 12px !important;
+        border-radius: 50% !important;
+        position: relative !important;
+        box-shadow: none !important;
+    }
+    
+    .hotness-container .stButton > button:hover {
+        transform: scale(1.6) rotate(15deg) !important;
+        filter: drop-shadow(0 6px 12px rgba(255, 107, 107, 0.8)) !important;
+        animation: fireGlow 0.6s ease-in-out infinite alternate !important;
+        background: radial-gradient(circle, rgba(255,107,107,0.2) 0%, transparent 70%) !important;
+    }
+    
+    .hotness-container .stButton > button:focus {
+        box-shadow: none !important;
+        outline: none !important;
+    }
+    
+    @keyframes fireGlow {
+        from {
+            filter: drop-shadow(0 6px 12px rgba(255, 107, 107, 0.6));
+        }
+        to {
+            filter: drop-shadow(0 8px 16px rgba(255, 165, 0, 1));
+        }
+    }
+    
+    .hotness-container .stButton > button[disabled] {
+        opacity: 0.7 !important;
+        cursor: default !important;
+        transform: scale(1.1) !important;
+    }
+    
+    .hotness-container .stButton > button[disabled]:hover {
+        transform: scale(1.2) !important;
+        animation: none !important;
+    }
+    
+    /* Voted state fire emoji */
+    .voted-fire {
+        font-size: 2rem;
+        opacity: 0.4;
+        padding: 12px;
+        cursor: pointer;
+        transition: opacity 0.3s ease;
+    }
+    
+    .voted-fire:hover {
+        opacity: 0.6;
+    }
+    
+    /* Fire celebration animation */
+    @keyframes fireExplosion {
+        0% {
+            opacity: 1;
+            transform: translateY(0) scale(1) rotate(0deg);
+        }
+        50% {
+            opacity: 0.8;
+            transform: translateY(-30px) scale(1.3) rotate(180deg);
+        }
+        100% {
+            opacity: 0;
+            transform: translateY(-60px) scale(0.5) rotate(360deg);
+        }
+    }
+    
+    .fire-celebration {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        z-index: 100;
+        overflow: hidden;
+    }
+    
+    .fire-emoji {
+        position: absolute;
+        font-size: 1.5rem;
+        animation: fireExplosion 2s ease-out forwards;
+    }
+    
+    /* Hotness progress bar */
+    .hotness-bar {
+        width: 60px;
+        height: 4px;
+        background: rgba(255, 255, 255, 0.3);
+        border-radius: 2px;
+        overflow: hidden;
+        margin-top: 4px;
+    }
+    
+    .hotness-progress {
+        height: 100%;
+        background: linear-gradient(90deg, #ffd89b 0%, #19547b 100%);
+        border-radius: 2px;
+        transition: width 0.3s ease;
+    }
+    
+    /* Spotlight styling for hottest tool */
+    .spotlight-container {
+        margin-bottom: 2rem;
+    }
+    
+    .spotlight-tile {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border: 3px solid #ffd700;
+        box-shadow: 0 12px 30px rgba(255, 215, 0, 0.4);
+        position: relative;
+        overflow: hidden;
+        border-radius: 12px;
+        margin: 0 auto;
+        max-width: 600px;
+    }
+    
+    .spotlight-badge {
+        background: linear-gradient(135deg, #ffd700 0%, #ffed4e 100%);
+        color: #1a202c;
+        padding: 8px 20px;
+        text-align: center;
+        font-size: 1rem;
+        font-weight: 700;
+        margin-bottom: 1rem;
+        border-radius: 0 0 20px 20px;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    }
+    
+    .spotlight-tile .main-title {
+        color: white !important;
+    }
+    
+    .spotlight-tile .content-text {
+        color: rgba(255, 255, 255, 0.9) !important;
     }
     
     /* Scroll indicator */
@@ -140,6 +333,20 @@ st.markdown("""
         
         .tagline {
             font-size: 1rem;
+        }
+        
+        .hotness-container {
+            top: 10px;
+            right: 10px;
+        }
+        
+        .hotness-button {
+            padding: 6px 10px;
+            font-size: 1rem;
+        }
+        
+        .hotness-bar {
+            width: 40px;
         }
     }
     
@@ -251,25 +458,15 @@ def render_filters(dm):
             help="Choose a domain to filter AI tools"
         )
     
-    # with col2:
-        # if st.button("📧 Get Daily Updates", use_container_width=True, type="secondary", key="daily_updates_btn"):
-        #     # Use JavaScript to scroll to bottom smoothly
-        #     st.markdown("""
-        #     <script>
-        #     setTimeout(function() {
-        #         window.scrollTo({
-        #             top: document.documentElement.scrollHeight,
-        #             behavior: 'smooth'
-        #         });
-        #     }, 1000);
-        #     </script>
-        #     """, unsafe_allow_html=True)
-        #     st.success("Scrolling to email signup...")
-    
     return selected_domain, 30  # Default to 30 days since we removed time filter
 
+def calculate_hotness_score(hotness_count, max_hotness):
+    """Calculate hotness percentage for progress bar - DEPRECATED"""
+    # This function is no longer used since we removed the progress bar
+    return 0
+
 def render_news_feed(dm, selected_domain, selected_days):
-    """Render the news feed with pagination"""
+    """Render the news feed with spotlight layout and pagination"""
     st.markdown("---")
     
     # Extract the actual domain name (remove "Coming Soon" text if any)
@@ -278,16 +475,13 @@ def render_news_feed(dm, selected_domain, selected_days):
     # Check if we should force refresh
     force_refresh = hasattr(st.session_state, 'force_refresh') and st.session_state.force_refresh
     
-    # Fetch and filter data
-    with st.spinner("Loading latest AI tools..."):
-        df = dm.fetch_news_data(force_refresh=force_refresh)
+    # Fetch and filter data with hotness
+    with st.spinner("Loading latest AI tools with hotness..."):
+        df = dm.fetch_news_data_with_hotness(force_refresh=force_refresh)
     
     if df.empty:
         st.info(f"No tools found for {actual_domain}. Check back soon! 🚀")
         return
-    
-    # Remove date filtering to show ALL tools
-    # df = dm.filter_by_date_range(df, selected_days)  # Commented out to show all
     
     # Filter by domain (only if not "All")
     if actual_domain != "All":
@@ -297,93 +491,136 @@ def render_news_feed(dm, selected_domain, selected_days):
         st.info(f"No tools found for {actual_domain}. Try selecting 'All' to see all available tools! 🔍")
         return
     
-    # Pagination setup
-    tools_per_page = 30  # Show 12 tools per page (6 rows of 2)
-    total_tools = len(df)
-    total_pages = (total_tools - 1) // tools_per_page + 1
+    # Sort by hotness (hottest first), then by date
+    df = df.sort_values(['hotness_count', 'Date_Added'], ascending=[False, False])
     
-    # Initialize page number in session state
-    if 'current_page' not in st.session_state:
-        st.session_state.current_page = 1
+    # Calculate max hotness for progress bars
+    max_hotness = df['hotness_count'].max() if len(df) > 0 else 0
     
-    # Reset to page 1 if domain changes
-    if 'last_selected_domain' not in st.session_state:
-        st.session_state.last_selected_domain = actual_domain
-    elif st.session_state.last_selected_domain != actual_domain:
-        st.session_state.current_page = 1
-        st.session_state.last_selected_domain = actual_domain
+    # Check if we have a spotlight tool (5+ votes)
+    has_spotlight = len(df) > 0 and df.iloc[0]['hotness_count'] >= 5
     
-    # Ensure current page is valid
-    if st.session_state.current_page > total_pages:
-        st.session_state.current_page = total_pages
-    if st.session_state.current_page < 1:
-        st.session_state.current_page = 1
-    
-    # Calculate start and end indices for current page
-    start_idx = (st.session_state.current_page - 1) * tools_per_page
-    end_idx = min(start_idx + tools_per_page, total_tools)
-    
-    # Display tools count and pagination info
+    # Display tools count
     st.markdown(f"""
-    ### 🤖 {total_tools} AI Tools & Insights
+    ### 🤖 {len(df)} AI Tools & Insights
     <div style="color: #6B7280; margin-bottom: 1rem;">
-        Showing {start_idx + 1}-{end_idx} of {total_tools} tools 
-        (Page {st.session_state.current_page} of {total_pages})
+        Sorted by hotness 🔥 • Most tempting tools first
     </div>
     """, unsafe_allow_html=True)
     
-    # Get current page data
-    current_page_df = df.iloc[start_idx:end_idx].copy().reset_index(drop=True)
+    # Render spotlight tool if available
+    if has_spotlight:
+        st.markdown('<div class="spotlight-container">', unsafe_allow_html=True)
+        
+        # Spotlight badge
+        st.markdown("""
+        <div class="spotlight-badge">
+            🏆 MOST TEMPTING AI TOOL • People can't resist trying this!
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Render spotlight tool in center
+        spotlight_tool = df.iloc[0]
+        render_ai_tile(spotlight_tool, 0, dm, max_hotness, is_spotlight=True)
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Remove spotlight tool from regular grid
+        remaining_df = df.iloc[1:].copy().reset_index(drop=True)
+        start_idx = 1  # Start indexing from 1 since spotlight tool is 0
+    else:
+        remaining_df = df.copy()
+        start_idx = 0
     
-    # Create grid layout for tiles (2 columns) with fixed indices
-    for i in range(0, len(current_page_df), 2):
-        cols = st.columns(2)
-        
-        # First tile - use consistent indexing
-        tile_idx = start_idx + i
-        with cols[0]:
-            render_ai_tile(current_page_df.iloc[i], tile_idx)
-        
-        # Second tile (if exists)
-        if i + 1 < len(current_page_df):
-            tile_idx = start_idx + i + 1
-            with cols[1]:
-                render_ai_tile(current_page_df.iloc[i + 1], tile_idx)
+    # Pagination setup for remaining tools
+    tools_per_page = 30
+    total_tools = len(remaining_df)
     
-    # Pagination controls at bottom only
-    if total_pages > 1:
-        st.markdown("---")
-        col1, col2, col3, col4, col5 = st.columns([1, 1, 2, 1, 1])
+    if total_tools > 0:
+        total_pages = (total_tools - 1) // tools_per_page + 1
         
-        with col1:
-            if st.button("⏮️ First", disabled=(st.session_state.current_page == 1)):
-                st.session_state.current_page = 1
-                st.rerun()
+        # Initialize page number in session state
+        if 'current_page' not in st.session_state:
+            st.session_state.current_page = 1
         
-        with col2:
-            if st.button("◀️ Previous", disabled=(st.session_state.current_page == 1)):
-                st.session_state.current_page -= 1
-                st.rerun()
+        # Reset to page 1 if domain changes
+        if 'last_selected_domain' not in st.session_state:
+            st.session_state.last_selected_domain = actual_domain
+        elif st.session_state.last_selected_domain != actual_domain:
+            st.session_state.current_page = 1
+            st.session_state.last_selected_domain = actual_domain
         
-        with col3:
+        # Ensure current page is valid
+        if st.session_state.current_page > total_pages:
+            st.session_state.current_page = total_pages
+        if st.session_state.current_page < 1:
+            st.session_state.current_page = 1
+        
+        # Calculate start and end indices for current page
+        page_start = (st.session_state.current_page - 1) * tools_per_page
+        page_end = min(page_start + tools_per_page, total_tools)
+        
+        # Display pagination info
+        if has_spotlight:
             st.markdown(f"""
-            <div style="text-align: center; padding: 0.5rem; color: #6B7280; font-weight: 500;">
-                Page {st.session_state.current_page} of {total_pages}
+            <div style="color: #6B7280; margin-bottom: 1rem; margin-top: 2rem;">
+                Showing {page_start + 1}-{page_end} of {total_tools} additional tools 
+                (Page {st.session_state.current_page} of {total_pages})
             </div>
             """, unsafe_allow_html=True)
         
-        with col4:
-            if st.button("Next ▶️", disabled=(st.session_state.current_page == total_pages)):
-                st.session_state.current_page += 1
-                st.rerun()
+        # Get current page data
+        current_page_df = remaining_df.iloc[page_start:page_end].copy().reset_index(drop=True)
         
-        with col5:
-            if st.button("Last ⏭️", disabled=(st.session_state.current_page == total_pages)):
-                st.session_state.current_page = total_pages
-                st.rerun()
+        # Create grid layout for tiles (2 columns)
+        for i in range(0, len(current_page_df), 2):
+            cols = st.columns(2)
+            
+            # First tile
+            tile_idx = start_idx + page_start + i
+            with cols[0]:
+                render_ai_tile(current_page_df.iloc[i], tile_idx, dm, max_hotness, is_spotlight=False)
+            
+            # Second tile (if exists)
+            if i + 1 < len(current_page_df):
+                tile_idx = start_idx + page_start + i + 1
+                with cols[1]:
+                    render_ai_tile(current_page_df.iloc[i + 1], tile_idx, dm, max_hotness, is_spotlight=False)
+        
+        # Pagination controls at bottom
+        if total_pages > 1:
+            st.markdown("---")
+            col1, col2, col3, col4, col5 = st.columns([1, 1, 2, 1, 1])
+            
+            with col1:
+                if st.button("⏮️ First", disabled=(st.session_state.current_page == 1)):
+                    st.session_state.current_page = 1
+                    st.rerun()
+            
+            with col2:
+                if st.button("◀️ Previous", disabled=(st.session_state.current_page == 1)):
+                    st.session_state.current_page -= 1
+                    st.rerun()
+            
+            with col3:
+                st.markdown(f"""
+                <div style="text-align: center; padding: 0.5rem; color: #6B7280; font-weight: 500;">
+                    Page {st.session_state.current_page} of {total_pages}
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col4:
+                if st.button("Next ▶️", disabled=(st.session_state.current_page == total_pages)):
+                    st.session_state.current_page += 1
+                    st.rerun()
+            
+            with col5:
+                if st.button("Last ⏭️", disabled=(st.session_state.current_page == total_pages)):
+                    st.session_state.current_page = total_pages
+                    st.rerun()
 
-def render_ai_tile(row, idx):
-    """Render individual AI tile card with colorful fonts"""
+def render_ai_tile(row, idx, dm, max_hotness, is_spotlight=False):
+    """Render individual AI tile card with hotness feature"""
     
     # Clean data
     title = row.get('Title', 'No Title')
@@ -393,6 +630,7 @@ def render_ai_tile(row, idx):
     domain = row.get('Domain', 'General')
     integration_steps = row.get('Integration_Steps', '')
     date_added = row.get('Date_Added', '')
+    hotness_count = row.get('hotness_count', 0)
     
     # Format date
     try:
@@ -415,12 +653,11 @@ def render_ai_tile(row, idx):
         'Code Generation & Debugging': '#ff6b6b',
         'Dashboards & Reports': '#4ecdc4',
         'Natural Language Queries': '#45b7d1',
-        'Spreadsheets & Documents': '#f9ca24',
         'AutoML & Predictive Analytics': '#6c5ce7',
         'Meetings': '#fd79a8'
     }
     
-    domain_color = domain_colors.get(domain, "#FFDBDB")
+    domain_color = domain_colors.get(domain, "#667eea")
     
     # Unique key for each tile
     tile_key = f"tile_{idx}"
@@ -431,28 +668,106 @@ def render_ai_tile(row, idx):
     if f"{tile_key}_expanded" not in st.session_state:
         st.session_state[f"{tile_key}_expanded"] = False
     
+    # Get client IP and check if already voted
+    client_ip = get_client_ip()
+    has_voted = dm.check_if_ip_voted_cached(title, client_ip)
+    
+    # Calculate hotness percentage - no longer needed
+    # hotness_percentage = calculate_hotness_score(hotness_count, max_hotness) if max_hotness > 0 else 0
+    
+    # Container with spotlight styling if applicable
+    container_class = "spotlight-tile" if is_spotlight else ""
+    
     # Use Streamlit's built-in container with border
     with st.container(border=True):
-        if not st.session_state[f"{tile_key}_flipped"]:
-            # Front of the card with colorful styling
-            
-            # Title with gradient
+        # Add spotlight styling with CSS injection if needed
+        if is_spotlight:
             st.markdown(f"""
-            <h2 style="background: linear-gradient(135deg, {domain_color} 0%, #764ba2 100%); 
-                       -webkit-background-clip: text; color;
-                       background-clip: text; font-size: 1.5rem; font-weight: 700; 
-                       margin-bottom: 1rem;">
-                🤖 {title}
-            </h2>
+            <style>
+            div[data-testid="stContainer"] > div:last-child {{
+                background: linear-gradient(135deg, {domain_color} 0%, #764ba2 100%);
+                border: 3px solid #ffd700;
+                box-shadow: 0 8px 25px rgba(255, 215, 0, 0.3);
+                position: relative;
+                border-radius: 12px;
+            }}
+            </style>
             """, unsafe_allow_html=True)
             
-            # Summary with styled text
+            # Spotlight badge
+            st.markdown("""
+            <div style="text-align: center; background: linear-gradient(135deg, #ffd700 0%, #ffed4e 100%); 
+                       color: #1a202c; padding: 4px 12px; border-radius: 0 0 12px 12px; 
+                       font-size: 0.8rem; font-weight: 700; margin: -1rem -1rem 1rem -1rem;">
+                🌟 HOTTEST AI TOOL
+            </div>
+            """, unsafe_allow_html=True)
+        
+        if not st.session_state[f"{tile_key}_flipped"]:
+            # Front of the card with hotness button
+            
+            # Create a container for title and hotness button
+            col_title, col_hotness = st.columns([4, 1])
+            
+            with col_title:
+                # Title with plain white/black styling
+                if is_spotlight:
+                    title_color = "#ffffff"  # Pure white for spotlight
+                else:
+                    title_color = "#ffffff"  # Pure white for all titles
+                
+                st.markdown(f"""
+                <h2 style="color: {title_color} !important; font-size: 1.5rem; font-weight: 700; 
+                           margin-bottom: 1rem; position: relative;" id="title_{idx}">
+                    🤖 {title}
+                </h2>
+                """, unsafe_allow_html=True)
+            
+            with col_hotness:
+                # Create tooltip text
+                if hotness_count == 0:
+                    tooltip_text = "If you're tempted to try this AI, hit this button"
+                elif hotness_count == 1:
+                    tooltip_text = "If you're tempted to try this AI, hit this button • 1 person clicked this today"
+                else:
+                    tooltip_text = f"If you're tempted to try this AI, hit this button • {hotness_count} people clicked this today"
+                
+                # Container for right-aligned fire button
+                st.markdown('<div class="hotness-container">', unsafe_allow_html=True)
+                
+                # Use only Streamlit button with enhanced interactivity
+                if not has_voted:
+                    # Create a unique key for the button
+                    button_key = f"hotness_btn_{idx}_{title[:10]}"
+                    
+                    if st.button("🔥", key=button_key, help=tooltip_text, use_container_width=False):
+                        success = dm.record_hotness_vote(title, client_ip)
+                        if success:
+                            st.success("🔥 Marked as hot!")
+                            # Longer delay to let user see the success message
+                            time.sleep(0.5)
+                            st.rerun()
+                        else:
+                            st.error("Already voted or error occurred")
+                else:
+                    # Show low opacity fire emoji for voted state
+                    st.markdown(f"""
+                    <div style="text-align: right; margin-right: -10px;">
+                        <span class="voted-fire" title="Thank you for showing interest">🔥</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                st.markdown('</div>', unsafe_allow_html=True)
+            
+            # Summary with styled text (only summary gets domain color)
             current_summary = summary if st.session_state[f"{tile_key}_expanded"] else short_summary
             if show_see_more and not st.session_state[f"{tile_key}_expanded"]:
                 current_summary += "..."
             
+            # Apply domain color only to summary text
+            text_color = domain_color
             st.markdown(f"""
-            <div style="color:  {domain_color}; line-height: 1.6; margin-bottom: 1.2rem; font-size: 1rem;">
+            <div style="color: {text_color}; line-height: 1.6; margin-bottom: 1.2rem; font-size: 1rem;">
                 {current_summary}
             </div>
             """, unsafe_allow_html=True)
